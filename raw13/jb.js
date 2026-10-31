@@ -426,6 +426,27 @@ let allDone = false,
     const webkitBase = nativeFn.sub32(off.wk_expm1_builtin);
     const errorFn = p.read8(webkitBase.add32(off.wk___imp___error));
     const libkernelBase = errorFn.sub32(off.k__error);
+
+    if (HX1400_MODE) {
+      const libkernelAdjust =
+        libkernelBase.low & 0x3fff;
+
+      if (libkernelAdjust !== 0) {
+        libkernelBase =
+          libkernelBase.sub32(
+            libkernelAdjust,
+          );
+
+        mark(
+          "HX1400-LIBKERNEL-ALIGN",
+          "adjust=0x" +
+          libkernelAdjust.toString(16) +
+          " base=" +
+          libkernelBase,
+        );
+      }
+    }
+
     mark("BASES", "webkit=" + webkitBase + " libkernel=" + libkernelBase);
     const aligned = (v) => v.hi > 0 && (v.low & 0x3fff) === 0;
     if (
