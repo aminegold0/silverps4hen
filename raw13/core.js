@@ -1328,6 +1328,19 @@ function beginComposition() {
   const fakeChars = copiedLength >= 8 ? copiedLength - 8 : 0;
   const sourceCovered = fakeChars * 2 <= CARRIER_BYTES;
 
+  /* ADDROF_COVERAGE_PATCH */
+  const requiredSourceBytes = fakeChars * 2;
+  const minimumSlots =
+    Math.ceil(requiredSourceBytes / 8);
+
+  emit(
+    "ADDROF-COVERAGE",
+    `chars=${copiedLength}` +
+    `-need=${requiredSourceBytes}` +
+    `-have=${CARRIER_BYTES}` +
+    `-minSlots=${minimumSlots}`
+  );
+
   emit("ADDROF-RETURNED", REVISION);
   emit("ADDROF-COPY", `chars=${copiedLength}-source-covered=${sourceCovered}`);
   emit(
@@ -1340,7 +1353,7 @@ function beginComposition() {
     finishEarlySafeAttempt(
       "ADDROF-FAIL",
       `repeat=${repeated}-distinct=${distinct}` +
-        `-plausible=${plausible}-covered=${sourceCovered}`,
+        `-plausible=${plausible}-covered=${sourceCovered}-minSlots=${minimumSlots}`,
       "addrof-validation",
     );
     return;
