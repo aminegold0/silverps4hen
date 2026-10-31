@@ -13,6 +13,11 @@ const params = new URLSearchParams(location.search);
 const STOP_BEFORE_DOUBLE = params.get("stop") === "beforedouble";
 
 function post(tag, detail) {
+  /* HX1400_POST_DISABLED */
+  if (params.get("hx1400") === "1") {
+    return;
+  }
+
   try {
     const x = new XMLHttpRequest();
     x.open("POST", "/t", true);
@@ -64,27 +69,31 @@ function finishUI(ok) {
 function mark(tag, detail) {
   const raw = detail;
   detail = terse(detail);
-  lines.push(tag + (detail == null || detail === "" ? "" : "  " + detail));
-  if (SHOW_LOG && outEl) {
-    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    outEl.innerHTML = lines
-      .map(function (l) {
-        l = esc(l);
-        const c =
-          /FAIL|ERROR|THREW|REBOOT|MISS|LOST|POISON|TIMEOUT|MISMATCH|ABORTED|GIVEUP|NO-STORAGE|UNSEEN/i.test(
-            l,
-          )
-            ? "bad"
-            : /WARN|SKIP|REFUS|COMMITTED|DIRTY/i.test(l)
-              ? "warn"
-              : /\bOK\b|\bPASS\b|PASS=|ACHIEVED|RUNNING|ARMED/i.test(l)
-                ? "ok"
-                : "";
-        return c ? '<span class="' + c + '">' + l + "</span>" : l;
-      })
-      .join("\n");
-    outEl.scrollTop = outEl.scrollHeight;
+
+  lines.push(
+    tag +
+    (
+      detail == null || detail === ""
+        ? ""
+        : "  " + detail
+    ),
+  );
+
+  if (lines.length > 600) {
+    lines.splice(
+      0,
+      lines.length - 600,
+    );
   }
+
+  if (SHOW_LOG && outEl) {
+    outEl.textContent =
+      lines.join("\n");
+
+    outEl.scrollTop =
+      outEl.scrollHeight;
+  }
+
   post(tag, raw);
 }
 
