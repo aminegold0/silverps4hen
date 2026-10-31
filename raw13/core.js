@@ -13,13 +13,16 @@ const FUNCTION_BYTES = 0x20;
 const NATIVE_EXECUTABLE_BYTES = 0x38;
 const HOLDER_BYTES = 0x40;
 
+const HX1400_LIGHT_CORE =
+  new URLSearchParams(location.search).get("hx1400") === "1";
+
 const CARRIER_SLOTS = (function () {
   try {
     const q = new URLSearchParams(location.search).get("slots");
     const n = q ? parseInt(q, 10) : 0;
     if (n >= 100000 && n <= 40000000) return n;
   } catch (e) {}
-  return 12000000;
+  return HX1400_LIGHT_CORE ? 3000000 : 12000000;
 })();
 const CARRIER_BYTES = CARRIER_SLOTS * 8;
 const CAPTURE_DELAY_MS = 50;
@@ -41,7 +44,11 @@ const _gOverride = (function () {
 })();
 const _g = (name, dflt) =>
   typeof _gOverride[name] === "number" ? _gOverride[name] : dflt;
-if (typeof _gOverride.drain === "number") DRAIN_COUNT = _gOverride.drain;
+if (typeof _gOverride.drain === "number") {
+  DRAIN_COUNT = _gOverride.drain;
+} else if (HX1400_LIGHT_CORE) {
+  DRAIN_COUNT = 64;
+}
 
 const DRAIN_SIZE = _g("drainsz", 0x10000);
 const SLAB_SIZE = _g("slab", 0x400000);
