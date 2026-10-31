@@ -309,17 +309,29 @@ let allDone = false,
     mark("FW-STATUS", off.fw_status || "none");
     mark(
       "FW-KTABLE",
-      "idt_rsvd=0x" +
-        off.k_idt_rsvd.toString(16) +
-        " prison0=0x" +
-        off.k_prison0.toString(16) +
-        " rootvnode=0x" +
-        off.k_rootvnode.toString(16) +
-        " kpatch=" +
+      "idt_rsvd=" +
+        (
+          off.k_idt_rsvd === undefined
+            ? "undefined"
+            : "0x" + off.k_idt_rsvd.toString(16)
+        ) +
+      " prison0=" +
+        (
+          off.k_prison0 === undefined
+            ? "undefined"
+            : "0x" + off.k_prison0.toString(16)
+        ) +
+      " rootvnode=" +
+        (
+          off.k_rootvnode === undefined
+            ? "undefined"
+            : "0x" + off.k_rootvnode.toString(16)
+        ) +
+      " kpatch=" +
         KPATCH_FILE +
-        " payload=" +
+      " payload=" +
         PAYLOAD_FILE +
-        " src=ps4_offsets.js",
+      " src=ps4_offsets.js",
     );
 
     // ---- benign-miss auto-retry (reads only, before any kernel write) ----
