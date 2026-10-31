@@ -1,4 +1,4 @@
-import { establishPrimitive } from "./core.js?v=23";
+import { establishPrimitive } from "./core.js?v=27";
 import { installWindowP, pairStatus } from "./mem.js";
 import { int64 } from "./int64.js";
 import { offsetsFor } from "./ps4_offsets.js";
@@ -54,6 +54,108 @@ function terse(s) {
 }
 
 const SHOW_LOG = params.get("log") === "1";
+
+/* UPDATE_RAM_BOX */
+const ramBox =
+  document.getElementById("ramBox");
+
+function formatMB(bytes) {
+  bytes = Number(bytes || 0);
+
+  if (bytes <= 0) {
+    return "0MB";
+  }
+
+  return (
+    (bytes / (1024 * 1024)).toFixed(2) +
+    "MB"
+  );
+}
+
+function updateRamBox() {
+  if (!ramBox) {
+    return;
+  }
+
+  let heapText =
+    "JS heap: N/A";
+
+  try {
+    if (
+      performance &&
+      performance.memory
+    ) {
+      const used =
+        Number(
+          performance.memory.usedJSHeapSize || 0,
+        );
+
+      const limit =
+        Number(
+          performance.memory.jsHeapSizeLimit || 0,
+        );
+
+      if (limit > 0) {
+        const percent =
+          used / limit * 100;
+
+        heapText =
+          "JS heap: " +
+          percent.toFixed(1) +
+          "% (" +
+          formatMB(used) +
+          "/" +
+          formatMB(limit) +
+          ")";
+      } else {
+        heapText =
+          "JS heap: " +
+          formatMB(used);
+      }
+    }
+  } catch (ramError) {
+    heapText =
+      "JS heap: error";
+  }
+
+  let coreText =
+    "core: N/A";
+
+  try {
+    const info =
+      globalThis.__CORE_MEM_INFO;
+
+    if (info) {
+      coreText =
+        "core: slots=" +
+        info.slots +
+        " drain=" +
+        info.drainCount +
+        "x" +
+        formatMB(info.drainSize) +
+        " est=" +
+        formatMB(info.estimatedBytes) +
+        " mem=" +
+        info.memLevel;
+    }
+  } catch (coreError) {
+    coreText =
+      "core: error";
+  }
+
+  ramBox.textContent =
+    heapText + " | " + coreText;
+}
+
+if (ramBox) {
+  updateRamBox();
+
+  setInterval(
+    updateRamBox,
+    500,
+  );
+}
+
 if (SHOW_LOG && document.body) document.body.className = "log";
 function finishUI(ok) {
   if (SHOW_LOG || !document.body) return;
