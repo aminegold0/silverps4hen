@@ -425,7 +425,7 @@ let allDone = false,
     );
     const webkitBase = nativeFn.sub32(off.wk_expm1_builtin);
     const errorFn = p.read8(webkitBase.add32(off.wk___imp___error));
-    const libkernelBase = errorFn.sub32(off.k__error);
+    let libkernelBase = errorFn.sub32(off.k__error);
 
     if (HX1400_MODE) {
       const libkernelAdjust =
