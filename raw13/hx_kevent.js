@@ -117,8 +117,14 @@ function TODO(where) { fin("TODO: " + where + " (next port pass)"); }
 
 export async function runKevent(c) {
   STATE.ctx = c;
-  if (!c.kbase) fin("kbase not provided - run route leak first");
-  STATE.kbase = num(c.kbase);
+  const kob = c.params && c.params.get ? c.params.get("kbase") : null;
+  if (kob) {
+    STATE.kbase = BigInt(kob);
+    log("KEVENT-KBASE-OVERRIDE", h16(STATE.kbase));
+  } else {
+    if (!c.kbase) fin("kbase not provided - run route leak first");
+    STATE.kbase = num(c.kbase);
+  }
   log("KEVENT-PORT", "kbase=" + h16(STATE.kbase));
 
   const magic = ctx().p.read4(toI64(ctx().libkernelBase)) >>> 0;
