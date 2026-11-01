@@ -993,15 +993,30 @@ let allDone = false,
       }
       return null;
     }
-
+    function bigRed(msg) {
+      try {
+        let d = document.getElementById("bigred");
+        if (!d) {
+          d = document.createElement("div");
+          d.id = "bigred";
+          d.style.cssText =
+            "position:fixed;left:0;top:0;width:100%;height:100%;background:#c00000;" +
+            "color:#fff;z-index:999999;font-size:44px;font-weight:bold;text-align:center;" +
+            "padding-top:32%;font-family:sans-serif;white-space:pre-wrap;line-height:1.4;";
+          document.body.appendChild(d);
+        }
+        d.textContent = msg;
+      } catch (e) {}
+    }
     let restartAdvised = false;
     async function adviseRestart(why) {
       if (restartAdvised) return;
       restartAdvised = true;
-      mark(
+            mark(
         "RESTART-NEEDED",
         why + " -- FULL power off the console (not Rest Mode), then power on",
       );
+      bigRed("RESTART REQUIRED\n\n" + why + "\n\nFULL power off (not Rest Mode), then power on");
       try {
         if (!p || !callAddr || !libkernelBase) {
           mark("RESTART-MANUAL", "no memory primitive - reboot by hand");
@@ -1119,7 +1134,7 @@ let allDone = false,
                 return;
               }
               try { sessionStorage.removeItem("kv-kbase-retry"); } catch (e) {}
-              mark("RESTART-NEEDED", "route dump has no kernel pointers on this boot -- FULL power off (not Rest Mode), then run again");
+                     bigRed("RESTART REQUIRED\n\nRoute leak found no kernel pointers.\nFULL power off (not Rest Mode), power on,\nthen run again. Repeat until it passes.");
               allDone = true;
               finishUI(false);
               return;
