@@ -1109,6 +1109,22 @@ let allDone = false,
                 return new Uint8Array(await response.arrayBuffer());
               },
             });
+            if (!globalThis.__HX_KBASE) {
+              let kn = 0;
+              try { kn = parseInt(sessionStorage.getItem("kv-kbase-retry") || "0", 10) || 0; } catch (e) {}
+              if (kn < 2) {
+                try { sessionStorage.setItem("kv-kbase-retry", String(kn + 1)); } catch (e) {}
+                mark("KV-RETRY", "route-leak found no kernel pointers; page reload " + (kn + 1) + "/2 -- if it keeps failing, FULL power off the console");
+                setTimeout(() => { try { location.reload(); } catch (e) {} }, 600);
+                return;
+              }
+              try { sessionStorage.removeItem("kv-kbase-retry"); } catch (e) {}
+              mark("RESTART-NEEDED", "route dump has no kernel pointers on this boot -- FULL power off (not Rest Mode), then run again");
+              allDone = true;
+              finishUI(false);
+              return;
+            }
+            try { sessionStorage.removeItem("kv-kbase-retry"); } catch (e) {}
             const kvb = await import("./hx_kevent.js?v=1");
             const kvOk = await kvb.runKevent({
               p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
