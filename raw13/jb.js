@@ -999,10 +999,10 @@ let allDone = false,
         if (!d) {
           d = document.createElement("div");
           d.id = "bigred";
-          d.style.cssText =
-            "position:fixed;left:0;top:0;width:100%;height:100%;background:#c00000;" +
-            "color:#fff;z-index:999999;font-size:44px;font-weight:bold;text-align:center;" +
-            "padding-top:32%;font-family:sans-serif;white-space:pre-wrap;line-height:1.4;";
+                    d.style.cssText =
+            "position:fixed;left:0;top:0;width:100%;background:#111;color:#fff;" +
+            "z-index:999999;font-size:22px;font-weight:bold;text-align:center;" +
+            "padding:14px;font-family:sans-serif;white-space:pre-wrap;line-height:1.4;";
           document.body.appendChild(d);
         }
         d.textContent = msg;
