@@ -1,4 +1,3 @@
-
 import { int64 } from "./int64.js";
 import { HX1400_TABLES } from "./hx_tables.js";
 
@@ -198,7 +197,7 @@ function allocBuffer(size) {
     ab: ab,
     dv: dv,
     u8: u8,
-    addr: num(c.bufAddr(ab)),
+    addr: c.bufAddr(ab),
   };
 }
 
@@ -723,9 +722,12 @@ async function discoverKbase() {
   );
 
   if (routeRv !== 0) {
+    const e = (typeof c.errno === "function") ? c.errno() : "n/a";
     throw new Error(
       "route closed rv=" +
-      routeRv,
+      routeRv +
+      " errno=" +
+      e,
     );
   }
 
