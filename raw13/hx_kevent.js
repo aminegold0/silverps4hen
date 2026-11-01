@@ -59,68 +59,72 @@ function sc6(n, a, b, c, d, e, f) {
 }
 
 // ---------- dynsym lookup in libkernel (ported dlf) ----------
+// All DT_* values are RVAs (module-relative); runtime addr = libkernelBase + rva.
 function resolveNative(name) {
   const c = ctx();
-  const B = c.libkernelBase;           // int64
+  const base = num(c.libkernelBase);
   const rd4 = (a) => c.p.read4(toI64(a)) >>> 0;
   const rd8 = (a) => num(c.p.read8(toI64(a)));
+  const inRva = (v) => v !== null && num(v) < BigInt(0x8000000);
   if (!STATE._elf) {
-    const inRange = (v) => {
-      if (v === null) return false;
-      const n = num(v);
-      const base = num(B);
-      return n >= base && n < base + BigInt(0x4000000);
-    };
-    const phoff = rd8(B.add32(0x20));
-    const phentsize = rd4(B.add32(0x36)) & 0xffff;
-    const phnum = rd4(B.add32(0x38)) & 0xffff;
-    log("ELF-HDR", "base=" + h16(B) + " phoff=" + h16(phoff) + " entsz=" + phentsize + " phnum=" + phnum);
-    let dynV = null;
+    const phoff = rd8(base + 0x20n);
+    const phentsize = rd4(base + 0x36n) & 0xffff;
+    const phnum = rd4(base + 0x38n) & 0xffff;
+    log("ELF-HDR", "base=" + h16(base) + " phoff=" + h16(phoff) + " entsz=" + phentsize + " phnum=" + phnum);
+    let dynRva = null;
     for (let k = 0; k < phnum; k++) {
-      const ph = num(B) + phoff + BigInt(k * phentsize);
-      if (rd4(ph) === 2) { dynV = rd8(ph + 0x10n); break; }
+      const ph = base + phoff + BigInt(k * phentsize);
+      if (rd4(ph) === 2) { dynRva = rd8(ph + 0x10n); break; }
     }
-    log("ELF-DYN", "dynV=" + h16(dynV));
-    if (!inRange(dynV)) fin("PT_DYNAMIC not found/plausible");
-    let strV = null, symV = null, hashV = null, symEnt = 24;
+    log("ELF-DYN", "dynRva=" + h16(dynRva) + " ok=" + inRva(dynRva));
+    if (!inRva(dynRva)) fin("PT_DYNAMIC rva not plausible");
+    const dynA = base + dynRva;
+    let strRva = null, symRva = null, hashRva = null, symEnt = 24;
     for (let k = 0; k < 4096; k++) {
-      const tag = rd8(dynV + BigInt(k * 16));
-      const val = rd8(dynV + BigInt(k * 16 + 8));
+      const tag = rd8(dynA + BigInt(k * 16));
+      const val = rd8(dynA + BigInt(k * 16 + 8));
       if (tag === 0n) break;
-      if (tag === 5n) strV = val;
-      else if (tag === 6n) symV = val;
-      else if (tag === 4n) hashV = val;
+      if (tag === 5n) strRva = val;
+      else if (tag === 6n) symRva = val;
+      else if (tag === 4n) hashRva = val;
       else if (tag === 11n) symEnt = Number(val);
     }
-    log("ELF-TABS", "str=" + h16(strV) + " sym=" + h16(symV) + " hash=" + h16(hashV) +
+    log("ELF-TABS", "str=" + h16(strRva) + " sym=" + h16(symRva) + " hash=" + h16(hashRva) +
         " symEnt=" + symEnt +
-        " range=" + [strV, symV, hashV].map((v) => inRange(v)).join(","));
-    if (!inRange(strV) || !inRange(symV) || !inRange(hashV))
-      fin("dynamic tabs not plausible");
-    STATE._elf = { strV, symV, hashV, symEnt };
+        " ok=" + [strRva, symRva, hashRva].map(inRva).join(","));
+    if (!inRva(strRva) || !inRva(symRva) || !inRva(hashRva))
+      fin("dynamic table rvas not plausible");
+    STATE._elf = { strRva, symRva, hashRva, symEnt };
   }
-  const { strV, symV, hashV, symEnt } = STATE._elf;
+  const E = STATE._elf;
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h << 4) + name.charCodeAt(i);
-  const g = h & 0xf0000000; if (g) h ^= g >>> 24; h &= ~g;
-  const nbucket = rd4(num(B) + hashV);
-  let idx = rd4(num(B) + hashV + 8n + BigInt((h % nbucket) * 4));
+  const g = h & 0xf0000000;
+  if (g) h ^= g >>> 24;
+  h &= ~g;
+  const hashA = base + E.hashRva;
+  const nbucket = rd4(hashA);
+  let idx = rd4(hashA + 8n + BigInt((h % nbucket) * 4));
   let guard = 0;
   while (idx !== 0 && guard++ < 4096) {
-    const sym = num(B) + symV + BigInt(idx * symEnt);
-    let s = "", off = rd4(sym);
+    const sym = base + E.symRva + BigInt(idx * E.symEnt);
+    const nameOff = rd4(sym);
+    let s = "";
     for (let i = 0; i < 64; i++) {
-      const ch = c.p.read1(toI64(num(B) + strV + BigInt(off + i)));
+      const ch = c.p.read1(toI64(base + E.strRva + BigInt(nameOff + i)));
       if (ch === 0) break;
       s += String.fromCharCode(ch);
     }
     if (s === name) {
-      const stub = num(B) + rd8(sym + 8n);
+      const stub = base + rd8(sym + 8n);
       const sv = c.p.read8(toI64(stub));
-      const sn = ((num(sv) & 0xffffffffn) >> 24n) | ((num(sv) >> 56n) << 8n);
-      return { stub: toI64(stub), num: Number(sn & 0xffffffffn) };
+      const svn = num(sv);
+      if ((svn & 0xffffffn) !== 0xc0c748n || (svn >> 56n) !== 0x49n)
+        fin("stub shape unexpected for " + name + " at " + h16(stub));
+      const sn = Number((svn >> 24n) & 0xffffffffn);
+      return { stub: toI64(stub), num: sn };
     }
-    idx = rd4(num(B) + hashV + 8n + BigInt(nbucket * 4 + idx * 4));
+    idx = rd4(hashA + 8n + BigInt(nbucket * 4 + idx * 4));
   }
   return null;
 }
