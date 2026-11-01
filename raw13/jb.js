@@ -940,6 +940,86 @@ let allDone = false,
       const a = new int64(r.lo, r.hi);
       return a.hi === 0 && a.low === 0 ? -1 : p.read4(a) | 0;
     }
+    function dynsymLookup(name) {
+      const B = libkernelBase;
+      const rd4 = (a) => p.read4(a) >>> 0;
+      const rd8 = (a) => p.read8(a);
+      if (!globalThis.__elf) {
+        const phoff = rd8(B.add32(0x20));
+        const phentsize = rd4(B.add32(0x36)) & 0xffff;
+        const phnum = rd4(B.add32(0x38)) & 0xffff;
+        let dynV = null;
+        for (let k = 0; k < phnum; k++) {
+          const ph = B.add32(phoff).add32(k * phentsize);
+          if (rd4(ph) === 2) { dynV = rd8(ph.add32(0x10)); break; }
+        }
+        let strV = null, symV = null, hashV = null, symEnt = 24;
+        for (let k = 0; k < 4096; k++) {
+          const tag = rd8(dynV.add32(k * 16));
+          const val = rd8(dynV.add32(k * 16 + 8));
+          if (tag.hi === 0 && tag.low === 0) break;
+          if (tag.low === 5) strV = val;
+          else if (tag.low === 6) symV = val;
+          else if (tag.low === 4) hashV = val;
+          else if (tag.low === 11) symEnt = val.low >>> 0;
+        }
+        globalThis.__elf = { strV, symV, hashV, symEnt };
+      }
+      const E = globalThis.__elf;
+      let h = 0;
+      for (let i = 0; i < name.length; i++) h = (h << 4) + name.charCodeAt(i);
+      const g = h & 0xf0000000;
+      if (g) h ^= g >>> 24;
+      h &= ~g;
+      const B2 = libkernelBase;
+      const nb = (a) => (p.read4(a) >>> 0);
+      const nbucket = nb(B2.add32(E.hashV));
+      let idx = nb(B2.add32(E.hashV).add32(8 + (h % nbucket) * 4));
+      let guard = 0;
+      while (idx !== 0 && guard++ < 4096) {
+        const sym = B2.add32(E.symV).add32(idx * E.symEnt);
+        const nameOff = nb(sym);
+        let s = "";
+        for (let i = 0; i < 64; i++) {
+          const ch = p.read1(B2.add32(E.strV).add32(nameOff + i));
+          if (ch === 0) break;
+          s += String.fromCharCode(ch);
+        }
+        if (s === name) return B2.add32(p.read8(sym.add32(8)));
+        idx = nb(B2.add32(E.hashV).add32(8 + nbucket * 4 + idx * 4));
+      }
+      return null;
+    }
+
+    let restartAdvised = false;
+    async function adviseRestart(why) {
+      if (restartAdvised) return;
+      restartAdvised = true;
+      mark(
+        "RESTART-NEEDED",
+        why + " -- FULL power off the console (not Rest Mode), then power on",
+      );
+      try {
+        if (!p || !callAddr || !libkernelBase) {
+          mark("RESTART-MANUAL", "no memory primitive - reboot by hand");
+          return;
+        }
+        const rb = dynsymLookup("reboot");
+        if (!rb) {
+          mark("RESTART-MANUAL", "reboot not exported by libkernel - reboot by hand");
+          return;
+        }
+        mark("RESTART-AUTO", "trying reboot() via " + rb);
+        const rv = callAddr(rb, [0, 0]).i32;
+        mark(
+          "RESTART-AUTO",
+          "reboot() returned " + rv + " (sandbox blocked it) - reboot by hand",
+        );
+      } catch (e) {
+        mark("RESTART-MANUAL", "auto-reboot failed: " + (e && e.message) + " - reboot by hand");
+      }
+    }
+
     async function relaunchPayload() {
       let blob = null;
       try {
@@ -4325,6 +4405,7 @@ const pid = sc(SYS.getpid).i32;
   } catch (e) {
     mark("THREW", e && e.message ? e.message : String(e));
     state("threw", "bad");
+    try { await adviseRestart("exploit threw"); } catch (eR) {}
   } finally {
     try {
       if (jbRestoreHook) jbRestoreHook("finally");
@@ -4358,6 +4439,11 @@ const pid = sc(SYS.getpid).i32;
     try {
       if (typeof A !== "undefined" && A) A.busy = 0;
     } catch (e) {}
+    try {
+      if (!payloadRunning && !jailbroken && (failCount > 0 || !allDone)) {
+        await adviseRestart("run incomplete pass=" + passCount + " fail=" + failCount);
+      }
+    } catch (eA) {}
     mark(
       "PROOF-SUMMARY-FINAL",
       "pass=" +
