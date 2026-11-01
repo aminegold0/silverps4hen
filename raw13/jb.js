@@ -1081,7 +1081,16 @@ let allDone = false,
     
     if (params.get("hx1400") === "1") {
       try {
-        const hx = await import("./hx1400_port.js?v=6");
+        const hx = await import("./hx1400_port.js?v=7");
+        if (!hx || typeof hx.runHx1400 !== "function") {
+          mark(
+            "HX1400-BAD-MODULE",
+            "runHx1400 missing - stale cached module? bump v and hard reload",
+          );
+          allDone = true;
+          finishUI(false);
+          return;
+        }
 
         if (params.get("kv") === "1") {
           mark("KV-START", "entering kv path");
