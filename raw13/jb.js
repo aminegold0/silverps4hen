@@ -841,6 +841,35 @@ let allDone = false,
       try {
         const hx = await import("./hx1400_port.js?v=6");
 
+        if (params.get("kv") === "1") {
+          await hx.runHx1400({
+            p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
+            webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
+            stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
+            mark: mark, trace: trace, state: state, check: check,
+            fetchFile: async function (path) {
+              const response = await fetch(path);
+              if (!response.ok) throw new Error(path + " HTTP " + response.status);
+              return new Uint8Array(await response.arrayBuffer());
+            },
+          });
+          const kvb = await import("./hx_kevent.js?v=1");
+          const kvOk = await kvb.runKevent({
+            p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
+            webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
+            stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
+            mark: mark, trace: trace, state: state, check: check,
+            fetchFile: async function (path) {
+              const response = await fetch(path);
+              if (!response.ok) throw new Error(path + " HTTP " + response.status);
+              return new Uint8Array(await response.arrayBuffer());
+            },
+            kbase: globalThis.__HX_KBASE,
+          });
+          allDone = true;
+          finishUI(kvOk === true);
+          return;
+        }
         const hxOk = await hx.runHx1400({
           p: p,
           sc: sc,
