@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta
         http-equiv="refresh"
-        content="0; url=raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&v=35"
+        content="0; url=raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&v=37"
     >
 
     <title>PS4 14.00 Hx Test</title>
@@ -12,9 +12,10 @@
 
 <body>
     <script>
-        location.replace(
-            "raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&v=35"
-        );
+        // Dynamic cache-buster: the PS4 browser caches pages very hard.
+        // A fresh v on every visit forces it to fetch the latest files.
+        var u = "raw13/jb.html?log=1&mem=1&slots=9100000&drain=12&hx1400=1&kv=1&v=" + Date.now();
+        location.replace(u);
     </script>
 
     <p>
