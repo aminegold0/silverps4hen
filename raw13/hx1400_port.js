@@ -598,6 +598,17 @@ function parseKbase(buffer, length) {
     length = buffer.ab.byteLength;
   }
 
+  if (!STATE.dumpDone && length >= 16) {
+    STATE.dumpDone = true;
+    const n = Math.min(length, 192);
+    for (let r = 0; r * 16 < n; r++) {
+      let hex = "";
+      for (let i = r * 16; i < Math.min(r * 16 + 16, n); i++)
+        hex += (buffer.u8[i] & 0xff).toString(16).padStart(2, "0");
+      log("HX1400-DUMP", "off=0x" + (r * 16).toString(16) + " " + hex);
+    }
+  }
+
   while (offset + 16 <= length) {
     const recordLength =
       buffer.dv.getUint16(offset, true);
@@ -722,7 +733,9 @@ async function discoverKbase() {
 
   log(
     "HX1400-SYSCTL-ROUTE",
-    "rv=" +
+    "fam=" +
+    mibValues[3] +
+    " rv=" +
     routeRv +
     " len=" +
     routeLen,
