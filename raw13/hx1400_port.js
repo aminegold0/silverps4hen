@@ -737,8 +737,8 @@ async function discoverKbase() {
     );
   }
 
-  for (let round = 1; round <= 3; round++) {
-    log("HX1400-ROUTE-ROUND", round + "/3");
+  for (let round = 1; round <= 5; round++) {
+    log("HX1400-ROUTE-ROUND", round + "/5");
     pinCpu();
 
     const aio = makeAioSet();
@@ -827,7 +827,7 @@ async function discoverKbase() {
 
     restorePin();
 
-    if (round < 3) {
+    if (round < 5) {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
