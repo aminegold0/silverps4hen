@@ -598,7 +598,7 @@ let allDone = false,
     const errorFn = p.read8(webkitBase.add32(off.wk___imp___error));
     let libkernelBase = errorFn.sub32(off.k__error);
 
-    if (HX1400_MODE) {
+    if (HX1400_MODE || PROBE_MODE) {
       const libkernelAdjust =
         libkernelBase.low & 0x3fff;
 
