@@ -722,6 +722,70 @@ let allDone = false,
     if (!check("syscall-page-needs-stub", miss.length === 0, miss.join(",")))
       return;
 
+    if (PROBE_MODE) {
+      const MOUNT = 21;
+      let mountStub = null;
+      for (let o = 0; o < off.k_scan_stage1; o += 16) {
+        const v = p.read8(libkernelBase.add32(o));
+        if ((v.low & 0x00ffffff) !== 0xc0c748 || v.hi >>> 24 !== 0x49)
+          continue;
+        if (
+          ((v.low >>> 24) | ((v.hi & 0x00ffffff) << 8)) >>> 0 ===
+          MOUNT
+        ) {
+          mountStub = libkernelBase.add32(o);
+          break;
+        }
+      }
+      check(
+        "mount-stub-found",
+        !!mountStub,
+        mountStub
+          ? String(mountStub)
+          : "num=21 absent from libkernel stubs",
+      );
+      if (mountStub) {
+        function strBuf(txt) {
+          const ab = new ArrayBuffer(txt.length + 1);
+          keepAlive.push(ab);
+          const u8 = new Uint8Array(ab);
+          for (let i = 0; i < txt.length; i++)
+            u8[i] = txt.charCodeAt(i);
+          u8[txt.length] = 0;
+          return ab;
+        }
+        const typeAb = strBuf("ufs");
+        const dirAb = strBuf("/mnt/usb0");
+        const specAb = strBuf("/dev/da0s1");
+        const argsAb = new ArrayBuffer(0x20);
+        keepAlive.push(argsAb);
+        const argsDv = new DataView(argsAb);
+        put(argsDv, 0x00, bufAddr(specAb));
+        const mrv = callAddr(mountStub, [
+          bufAddr(typeAb),
+          bufAddr(dirAb),
+          1,
+          bufAddr(argsAb),
+        ]).i32;
+        const merr = mrv !== 0 ? errno() : 0;
+        mark(
+          "PROBE-MOUNT",
+          "mount(ufs,/mnt/usb0,RDONLY,/dev/da0s1) rv=" +
+            mrv +
+            " errno=" +
+            merr +
+            " (2=ENOENT no-usb 1=EPERM-sandbox 78=ENOSYS-wrong-number 0=mounted?!)",
+        );
+        mark(
+          "PROBE-DONE",
+          "syscall interface + mount reachability probed; stopping",
+        );
+        return;
+      }
+      mark("PROBE-DONE", "mount stub absent; stopping");
+      return;
+    }
+
     function bufAddr(ab) {
       const c = p.leakval(ab);
       return p.read8(
