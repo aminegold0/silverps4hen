@@ -857,6 +857,7 @@ export async function runHx1400(ctx) {
     }
 
     STATE.kbase = kbase;
+    globalThis.__HX_KBASE = kbase;
 
     log(
       "HX1400-KBASE",
