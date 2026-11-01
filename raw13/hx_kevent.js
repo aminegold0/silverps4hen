@@ -65,14 +65,23 @@ function resolveNative(name) {
   const rd4 = (a) => c.p.read4(toI64(a)) >>> 0;
   const rd8 = (a) => num(c.p.read8(toI64(a)));
   if (!STATE._elf) {
+    const inRange = (v) => {
+      if (v === null) return false;
+      const n = num(v);
+      const base = num(B);
+      return n >= base && n < base + BigInt(0x4000000);
+    };
     const phoff = rd8(B.add32(0x20));
     const phentsize = rd4(B.add32(0x36)) & 0xffff;
     const phnum = rd4(B.add32(0x38)) & 0xffff;
+    log("ELF-HDR", "base=" + h16(B) + " phoff=" + h16(phoff) + " entsz=" + phentsize + " phnum=" + phnum);
     let dynV = null;
     for (let k = 0; k < phnum; k++) {
       const ph = num(B) + phoff + BigInt(k * phentsize);
       if (rd4(ph) === 2) { dynV = rd8(ph + 0x10n); break; }
     }
+    log("ELF-DYN", "dynV=" + h16(dynV));
+    if (!inRange(dynV)) fin("PT_DYNAMIC not found/plausible");
     let strV = null, symV = null, hashV = null, symEnt = 24;
     for (let k = 0; k < 4096; k++) {
       const tag = rd8(dynV + BigInt(k * 16));
@@ -83,6 +92,11 @@ function resolveNative(name) {
       else if (tag === 4n) hashV = val;
       else if (tag === 11n) symEnt = Number(val);
     }
+    log("ELF-TABS", "str=" + h16(strV) + " sym=" + h16(symV) + " hash=" + h16(hashV) +
+        " symEnt=" + symEnt +
+        " range=" + [strV, symV, hashV].map((v) => inRange(v)).join(","));
+    if (!inRange(strV) || !inRange(symV) || !inRange(hashV))
+      fin("dynamic tabs not plausible");
     STATE._elf = { strV, symV, hashV, symEnt };
   }
   const { strV, symV, hashV, symEnt } = STATE._elf;
