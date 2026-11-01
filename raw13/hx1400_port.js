@@ -737,15 +737,17 @@ async function discoverKbase() {
     );
   }
 
-  pinCpu();
+  for (let round = 1; round <= 3; round++) {
+    log("HX1400-ROUTE-ROUND", round + "/3");
+    pinCpu();
 
-  const aio = makeAioSet();
+    const aio = makeAioSet();
 
-  for (
-    let segment = 1;
-    segment <= 12;
-    segment++
-  ) {
+    for (
+      let segment = 1;
+      segment <= 12;
+      segment++
+    ) {
     log(
       "HX1400-WASH-SEGMENT",
       segment + "/12",
@@ -816,14 +818,19 @@ async function discoverKbase() {
       ),
     );
 
-    if (kbase) {
-      restorePin();
+      if (kbase) {
+        restorePin();
 
-      return kbase;
+        return kbase;
+      }
+    }
+
+    restorePin();
+
+    if (round < 3) {
+      await new Promise((r) => setTimeout(r, 100));
     }
   }
-
-  restorePin();
 
   return 0n;
 }
