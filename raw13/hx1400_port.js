@@ -678,11 +678,12 @@ async function discoverKbase() {
   );
 
   const mib = allocBuffer(32);
+    const famArg = c.params && c.params.get ? parseInt(c.params.get("fam") || "", 10) : NaN;
   const mibValues = [
     4,
     17,
     0,
-    28,
+    Number.isFinite(famArg) && famArg >= 0 ? famArg : 28,
     1,
     0,
   ];
