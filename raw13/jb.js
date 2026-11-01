@@ -1,7 +1,7 @@
 import { establishPrimitive } from "./core.js?v=28";
 import { installWindowP, pairStatus } from "./mem.js";
 import { int64 } from "./int64.js";
-import { offsetsFor } from "./ps4_offsets.js";
+import { offsetsFor, PS4 } from "./ps4_offsets.js?v=3";
 
 const outEl = document.getElementById("out");
 const stateEl = document.getElementById("state");
@@ -268,7 +268,66 @@ let allDone = false,
     mark("BUILD", "jb=skipjb2 base=ef1670a");
     mark("FW", key || "(not a PS4 UA)");
     if (!off) {
-      state("no offsets for this firmware", "bad");
+      /* NONPS4-DEBUG */
+      try {
+        document.body.classList.add("log");
+      } catch (e) {}
+
+      state("not a PS4 browser - debug mode", "warn");
+
+      mark(
+        "NONPS4-DEBUG",
+        "ua=" + (navigator.userAgent || "unknown"),
+      );
+
+      try {
+        mark(
+          "NONPS4-OFFSETS",
+          "supported=" + Object.keys(PS4).join(","),
+        );
+      } catch (e) {
+        mark("NONPS4-OFFSETS", "error=" + String(e));
+      }
+
+      try {
+        const off14 = PS4["14.00"];
+
+        if (off14) {
+          mark(
+            "NONPS4-14",
+            "present " +
+            "webkit=" + off14.wk_expm1_builtin +
+            " poprdi=0x" + off14.wk_POP_RDI_RET.toString(16) +
+            " poprsi=0x" + off14.wk_POP_RSI_RET.toString(16) +
+            " poprdx=0x" + off14.wk_POP_RDX_RET.toString(16),
+          );
+        } else {
+          mark("NONPS4-14", "entry=missing");
+        }
+      } catch (e) {
+        mark("NONPS4-14", "error=" + String(e));
+      }
+
+      try {
+        const info = globalThis.__CORE_MEM_INFO;
+
+        if (info) {
+          mark(
+            "NONPS4-CORE",
+            "hx1400=" + info.hx1400 +
+            " memLevel=" + info.memLevel +
+            " slots=" + info.slots +
+            " drain=" + info.drainCount +
+            " est=" + info.estimatedBytes,
+          );
+        } else {
+          mark("NONPS4-CORE", "info=missing");
+        }
+      } catch (e) {
+        mark("NONPS4-CORE", "error=" + String(e));
+      }
+
+      allDone = true;
       return;
     }
     const fwKey = key || "unknown";

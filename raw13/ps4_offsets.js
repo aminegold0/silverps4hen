@@ -645,29 +645,41 @@ PS4["12.52"] = Object.assign({}, PS4["12.50"], {
 });
 
 
-PS4["14.00"] = Object.assign({}, PS4["13.00"], {
-  alias_of: "13.00",
+PS4["14.00"] = Object.assign({}, PS4["13.52"], {
+  alias_of: "13.52-webkit",
 
   fw_status:
-    "state=PRIMITIVE-ONLY-TEST " +
-    "webkit=13.00-identical-per-research " +
-    "kernel=14.00-partial-not-for-full-jb",
+    "state=14.00-hx1400-dev " +
+    "webkit=13.52-identical " +
+    "kernel=provided-by-hx_tables.js " +
+    "not-for-raw13-full-jb",
 
   payload: "payload.bin",
   kpatch: "1400.bin",
 
+  k_stubs: undefined,
+  wk___imp_pthread_create: undefined,
+  k_pthread_create: undefined,
+
   k_idt_rsvd: undefined,
+  k_sysctl_handle_int: undefined,
+  k_jmp_rsi: undefined,
+  k_kl_lock: undefined,
+  k_evf_cv: undefined,
+  k_sysent: undefined,
+  k_sysent_661: undefined,
+
   k_oid_kern_file: undefined,
   k_oid_maxfilesperproc: undefined,
   k_oid_maxprocperuid: undefined,
   k_oid_maxfiles: undefined,
+
   k_arg1_maxfilesperproc: undefined,
   k_arg1_maxprocperuid: undefined,
   k_arg1_maxfiles: undefined,
+
   k_prison0: undefined,
   k_rootvnode: undefined,
-  k_sysent_661: undefined,
-  k_jmp_rsi: undefined,
 });
 
 export function offsetsFor(uaString) {
