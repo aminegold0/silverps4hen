@@ -842,6 +842,8 @@ let allDone = false,
         const hx = await import("./hx1400_port.js?v=6");
 
         if (params.get("kv") === "1") {
+          mark("KV-START", "entering kv path");
+          try {
           await hx.runHx1400({
             p: p, sc: sc, callAddr: callAddr, bufAddr: bufAddr, errno: errno,
             webkitBase: webkitBase, libkernelBase: libkernelBase, G: G,
@@ -869,6 +871,16 @@ let allDone = false,
           allDone = true;
           finishUI(kvOk === true);
           return;
+          } catch (kvError) {
+            mark(
+              "KV-THREW",
+              (kvError && kvError.message ? kvError.message : String(kvError)) +
+                " :: " +
+                (kvError && kvError.stack ? String(kvError.stack).slice(0, 400) : "no-stack"),
+            );
+            allDone = true;
+            return;
+          }
         }
         const hxOk = await hx.runHx1400({
           p: p,
