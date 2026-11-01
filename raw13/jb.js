@@ -240,11 +240,14 @@ const SYS = {
   getegid: 43,
   aio_multi_wait: 663,
   aio_multi_cancel: 666,
-  aio_submit_cmd: 669,
+    aio_submit_cmd: 669,
   write: 4,
   sysctl: 202,
   kill: 37,
   getppid: 39,
+  kqueue: 362,
+  kevent: 363,
+  jitshm_create: 533,
 };
 const JSVALUE_UNDEFINED = new int64(0x0a, 0xfffffff7);
 const keepAlive = [];
