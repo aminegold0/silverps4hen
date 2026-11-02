@@ -9,7 +9,9 @@ import { HX1400_TABLES } from "./hx_tables.js";
 //   scan victims for [8]==(int)page && [12]==0 -> joined==1 -> replant
 //   flags=2 -> HELD. kevent(-23) is one-time setup AFTER this (pc 9108),
 //   NOT per attempt. dce = the /dev/dce FD; page=((dce&0xffff)<<16)|0x985a.
-// v3: runtime libkernel rescan for stubs the stage-1 scanner missed (open=5).
+// v3: runtime libkernel rescan for stubs the stage-1 scanner missed.
+// v4: if rescan fails, SYNTHESIZE missing stubs: copy close(6) stub into RWX
+//     jitshm memory (jitshm_create=533), patch syscall number, register it.
 // ============================================================================
 
 const T = HX1400_TABLES;
@@ -56,29 +58,83 @@ function toI64(v) {
 }
 function ka(rva) { return STATE.kbase + BigInt(rva >>> 0); }
 
-// --- stub resolution: stage-1 map -> runtime libkernel rescan fallback ---
+// ---------- arena ----------
+const ARENAS = [];
+function allocBuf(size) {
+  const c = ctx();
+  const ab = new ArrayBuffer(size);
+  c.keepAlive.push(ab);
+  const dv = new DataView(ab);
+  ARENAS.push({ ab, dv, addr: num(c.bufAddr(ab)) });
+  return ARENAS[ARENAS.length - 1];
+}
+function zeroBuf(buf) { new Uint8Array(buf.ab).fill(0); }
+
+// --- stub resolution: stage-1 map -> libkernel rescan -> jitshm synth ---
 // Orbis syscall stub shape: mov w8|x8, #num ; svc #0 ; ret
 const SVC_INS = 0xd4000001;
+let SCAN_SEEN = 0;
 function findStubRaw(snum) {
   const p = ctx().p;
   const base = num(ctx().libkernelBase);
   const movW = (0x52800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
   const movX = (0xd2800000 | ((snum & 0xffff) << 5) | 8) >>> 0;
-  const LIMIT = 0x20000; // first 128KB of libkernel (stub section lives early)
+  const LIMIT = 0x80000; // 512KB of libkernel (v3's 128KB was not enough)
   for (let off = 0; off < LIMIT; off += 4) {
     const w = p.read4(toI64(base + BigInt(off))) >>> 0;
-    if (w === movW || w === movX) {
-      for (let k = 1; k <= 3; k++) {
+    const top = w & 0xffe00000;
+    if ((w === movW || w === movX)) {
+      for (let k = 1; k <= 8; k++) {
         if ((p.read4(toI64(base + BigInt(off + 4 * k))) >>> 0) === SVC_INS)
           return base + BigInt(off);
+      }
+    }
+    // sanity counter: any movz w8/x8 imm;svc pair
+    if ((top === 0x52800000 || top === 0xd2800000) && ((w & 0x1f) === 8)) {
+      for (let k = 1; k <= 3; k++) {
+        if ((p.read4(toI64(base + BigInt(off + 4 * k))) >>> 0) === SVC_INS) { SCAN_SEEN++; break; }
       }
     }
   }
   return null;
 }
 
+// Build a missing stub in RWX jitshm memory from the close(6) donor.
+function synthStub(targetNum) {
+  const donorNum = NUM.close !== targetNum ? NUM.close : NUM.socket;
+  const daddr = num(ctx().stubAddr.get(donorNum));
+  const p = ctx().p;
+  const w0 = p.read4(toI64(daddr)) >>> 0;
+  const top = w0 & 0xffe00000;
+  const imm = (w0 >> 5) & 0xffff;
+  if ((top !== 0xd2800000 && top !== 0x52800000) || imm !== donorNum || (w0 & 0x1f) !== 8)
+    return { err: "donor " + donorNum + " ins0=0x" + w0.toString(16) + " not movz" };
+  let jfd = scn("jitshm_create", 0, 16384, 7);
+  let usedName = false;
+  if (jfd < 0) {
+    const nb = allocBuf(32);
+    zeroBuf(nb);
+    jfd = scn("jitshm_create", nb.addr, 16384, 7);
+    usedName = true;
+  }
+  if (jfd < 0) return { err: "jitshm_create rc=" + jfd };
+  const m = scn64("mmap", 0, 16384, 7, 1, jfd, 0); // MAP_SHARED
+  const addr = (BigInt(m.hi >>> 0) << 32n) | BigInt(m.lo >>> 0);
+  if (addr < 0x10000n) return { err: "mmap jit rc=" + m.i32 };
+  if (typeof p.write4 !== "function") return { err: "p.write4 missing" };
+  const patched = (top | ((targetNum & 0xffff) << 5) | 8) >>> 0;
+  p.write4(toI64(addr), patched);
+  p.write4(toI64(addr + 4n), p.read4(toI64(daddr + 4n)) >>> 0);
+  p.write4(toI64(addr + 8n), p.read4(toI64(daddr + 8n)) >>> 0);
+  p.write4(toI64(addr + 12n), p.read4(toI64(daddr + 12n)) >>> 0);
+  log("NATIVES-SYNTH", "num=" + targetNum + " donor=" + donorNum +
+      " ins0=0x" + w0.toString(16) + "->0x" + patched.toString(16) +
+      " jfd=" + jfd + (usedName ? "(namebuf)" : "") + " rwx=" + h16(addr));
+  return { addr };
+}
+
 function ensureStubs() {
-  const missing = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
+  let missing = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
   for (const k of missing) {
     const addr = findStubRaw(NUM[k]);
     if (addr !== null) {
@@ -86,9 +142,16 @@ function ensureStubs() {
       log("NATIVES-RESCAN", k + "=" + NUM[k] + "@0x" + addr.toString(16));
     }
   }
+  log("NATIVES-SCANCOUNT", "saw " + SCAN_SEEN + " stubs in 512KB");
+  missing = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
+  for (const k of missing) {
+    const r = synthStub(NUM[k]);
+    if (r.addr !== undefined) ctx().stubAddr.set(NUM[k], toI64(r.addr));
+    else log("SYNTH-FAIL", k + ": " + r.err);
+  }
   const still = Object.keys(NUM).filter((k) => !ctx().stubAddr.has(NUM[k]));
   if (still.length)
-    fin("stubs missing: " + still.map((k) => k + "=" + NUM[k]).join(" ") + " (rescan failed)");
+    fin("stubs missing: " + still.map((k) => k + "=" + NUM[k]).join(" ") + " (rescan+synth failed)");
 }
 
 function scn(name, a, b, c, d, e, f) {
@@ -104,18 +167,6 @@ function scn64(name, a, b, c, d, e, f) {
   if (!stub) fin("stub missing: " + name + " (" + n + ")");
   return ctx().callAddr(stub, [toI64(a || 0), toI64(b || 0), toI64(c || 0), toI64(d || 0), toI64(e || 0), toI64(f || 0)]);
 }
-
-// ---------- arena ----------
-const ARENAS = [];
-function allocBuf(size) {
-  const c = ctx();
-  const ab = new ArrayBuffer(size);
-  c.keepAlive.push(ab);
-  const dv = new DataView(ab);
-  ARENAS.push({ ab, dv, addr: num(c.bufAddr(ab)) });
-  return ARENAS[ARENAS.length - 1];
-}
-function zeroBuf(buf) { new Uint8Array(buf.ab).fill(0); }
 
 // ---------- stage-2 primitives (bytecode-exact) ----------
 function buildTemplate() {
